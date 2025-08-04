@@ -33,17 +33,18 @@ func getHosts(host string) chan netip.Addr {
 		log.Fatal(err)
 	}
 
-	ip := prefix.Addr()
-
-	go func(ip netip.Addr) {
+	go func(pref netip.Prefix) {
 		defer close(ipChan)
 
-		for i := 1; i < 255; i++ {
-			ip = ip.Next()
+		// skip net address (first ip in subnet)
+		ip := pref.Addr().Next()
+
+		// skiping broadcast ip (last in subnet)
+		for ; pref.Contains(ip.Next()); ip = ip.Next() {
 			ipChan <- ip
 		}
 
-	}(ip)
+	}(prefix)
 
 	return ipChan
 
