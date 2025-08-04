@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"os/user"
+	"strings"
 	"sync"
 	"time"
 )
@@ -25,12 +26,28 @@ type Host struct {
 	Uname string
 }
 
+// extracting all valid ips of subnet
 func getHosts(host string) chan netip.Addr {
 	ipChan := make(chan netip.Addr, 100)
 
 	prefix, err := netip.ParsePrefix(host)
+
+	// account for single host ip provided
 	if err != nil {
-		log.Fatal(err)
+		go func(host string) {
+
+			defer close(ipChan)
+
+			ip, err := netip.ParseAddr(host)
+			if err != nil {
+				log.Fatal(err)
+			}
+			ipChan <- ip
+		}(host)
+
+		// log.Println(err)
+
+		return ipChan
 	}
 
 	go func(pref netip.Prefix) {
@@ -50,6 +67,7 @@ func getHosts(host string) chan netip.Addr {
 
 }
 
+// check if host is alive using ping
 func testAlive(ctx context.Context, host netip.Addr) bool {
 	cmd := exec.CommandContext(ctx, ping, "-c", "1", "-t", "2", host.String())
 
@@ -60,6 +78,7 @@ func testAlive(ctx context.Context, host netip.Addr) bool {
 	return true
 }
 
+// running uname command on remote using ssh
 func getUname(ctx context.Context, host netip.Addr, user string) string {
 	if _, ok := ctx.Deadline(); !ok {
 		var cancel context.CancelFunc
@@ -69,15 +88,16 @@ func getUname(ctx context.Context, host netip.Addr, user string) string {
 	config := fmt.Sprintf("%s@%s", user, host.String())
 	cmd := exec.CommandContext(ctx, ssh, config, uname)
 
-	out, err := cmd.CombinedOutput()
+	out, err := cmd.Output()
 	if err != nil {
-		log.Printf("Error: can't get uname for host %s, got this error (%w)\n", host.String(), err)
+		log.Printf(fmt.Errorf("Error: can't get uname for host %s, got this error (%w)\n", host.String(), err).Error())
 		return ""
 	}
 
-	return string(out)
+	return strings.TrimRight(string(out), "\n")
 }
 
+// scan muliple hosts at the same time
 func scanPrefix(ipChan chan netip.Addr) chan Host {
 	hChan := make(chan Host, 100)
 
@@ -113,6 +133,7 @@ func scanPrefix(ipChan chan netip.Addr) chan Host {
 	return hChan
 }
 
+// run uname for all hosts in subnet
 func unamePrefix(hchan chan Host, user string) chan Host {
 	ch := make(chan Host, 1)
 
@@ -154,6 +175,7 @@ func main() {
 	var sub string
 
 	// 192.168.0.133/30
+
 	if len(os.Args) != 2 {
 		log.Fatal("only one argument is permitted")
 	}
